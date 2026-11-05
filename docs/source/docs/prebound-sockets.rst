@@ -42,7 +42,8 @@ port and switch identities. Failure to bind or change identity must abort startu
 
 Once the endpoint has opened successfully, asyncio owns the supplied socket.
 Do not use or close it independently: closing the transport or the engine's
-dispatcher closes it. Validation errors leave ownership with the caller. If
+dispatcher closes it. Canceling setup before asyncio starts it also closes the
+accepted socket. Validation errors leave ownership with the caller. If
 opening is scheduled on an already running event loop, wait for endpoint setup
 before treating it as open, as with an address-bound transport.
 

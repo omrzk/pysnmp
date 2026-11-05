@@ -146,7 +146,8 @@ class DgramAsyncioProtocol(asyncio.DatagramProtocol, AbstractAsyncioTransport):
         Pass exactly one of ``iface`` and ``sock``. A supplied socket must match
         this transport's address family and already be bound to a local port.
         Once the endpoint opens, asyncio owns the socket and closes it when
-        ``closeTransport()`` is called.
+        ``closeTransport()`` is called. Cancellation before setup starts also
+        closes an accepted socket; validation errors leave it with the caller.
         """
         self._checkLoopIsUsable()
         if (iface is None) == (sock is None):
@@ -165,16 +166,33 @@ class DgramAsyncioProtocol(asyncio.DatagramProtocol, AbstractAsyncioTransport):
             if local_address[1] == 0:
                 raise error.CarrierError("Socket must be bound to a local port")
         try:
-            if sock is None:
-                c = self.loop.create_datagram_endpoint(
-                    lambda: self, local_addr=iface, family=self.sockFamily
-                )
+            if sock is not None and self.loop.is_running():
+                endpointStarted = False
+
+                async def openEndpoint():
+                    nonlocal endpointStarted
+                    endpointStarted = True
+                    return await self.loop.create_datagram_endpoint(
+                        lambda: self, sock=sock
+                    )
+
+                def closeUnstartedSocket(task):
+                    if task.cancelled() and not endpointStarted:
+                        sock.close()
+
+                self._lport = self.loop.create_task(openEndpoint())
+                self._lport.add_done_callback(closeUnstartedSocket)
             else:
-                c = self.loop.create_datagram_endpoint(lambda: self, sock=sock)
-            if self.loop.is_running():
-                self._lport = self.loop.create_task(c)
-            else:
-                self.loop.run_until_complete(c)
+                if sock is None:
+                    c = self.loop.create_datagram_endpoint(
+                        lambda: self, local_addr=iface, family=self.sockFamily
+                    )
+                else:
+                    c = self.loop.create_datagram_endpoint(lambda: self, sock=sock)
+                if self.loop.is_running():
+                    self._lport = self.loop.create_task(c)
+                else:
+                    self.loop.run_until_complete(c)
         except Exception as e:
             raise error.CarrierError(
                 ";".join(traceback.format_exception(type(e), e, e.__traceback__))

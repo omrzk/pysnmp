@@ -220,3 +220,57 @@ def test_server_rejects_closed_socket(family):
     finally:
         transport.closeTransport()
         loop.close()
+
+
+@pytest.mark.parametrize("family", [socket.AF_INET, socket.AF_INET6])
+@pytest.mark.parametrize("stage", ["not_started", "transport_created", "opened"])
+async def test_cancelled_adoption_closes_only_the_socket_it_owns(family, stage):
+    """Cancellation releases the port without closing a later socket on reuse."""
+    if family == socket.AF_INET6 and not socket.has_ipv6:
+        pytest.skip("IPv6 is unavailable")
+    host = "127.0.0.1" if family == socket.AF_INET else "::1"
+    transport_class = (
+        udp.UdpAsyncioTransport
+        if family == socket.AF_INET
+        else udp6.Udp6AsyncioTransport
+    )
+    loop = asyncio.get_running_loop()
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    sock.bind((host, 0))
+    address = sock.getsockname()
+    transport = transport_class(loop=loop)
+    replacement = None
+    try:
+        transport.openServerMode(sock=sock)
+        opening = transport._lport
+        if stage == "transport_created":
+            await asyncio.sleep(0)
+            assert transport.transport is None
+        elif stage == "opened":
+            await opening
+            assert transport.getLocalAddress() == address
+        transport.closeTransport()
+        transport.closeTransport()
+        if stage != "not_started":
+            # The existing asyncio close path owns any delegated descriptor.
+            assert sock.fileno() >= 0
+        await asyncio.gather(opening, return_exceptions=True)
+        await asyncio.sleep(0)
+        assert sock.fileno() == -1
+        assert opening.cancelled() is (stage != "opened")
+
+        replacement = socket.socket(family, socket.SOCK_DGRAM)
+        replacement.bind(address)
+        replacement.setblocking(False)
+        transport.closeTransport()
+        await asyncio.sleep(0)
+        with socket.socket(family, socket.SOCK_DGRAM) as sender:
+            sender.sendto(b"still owned by the caller", address)
+        data, _ = await asyncio.wait_for(loop.sock_recvfrom(replacement, 256), 1)
+        assert data == b"still owned by the caller"
+    finally:
+        transport.closeTransport()
+        await asyncio.sleep(0)
+        sock.close()
+        if replacement is not None:
+            replacement.close()
