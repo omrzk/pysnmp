@@ -144,8 +144,9 @@ class DgramAsyncioProtocol(asyncio.DatagramProtocol, AbstractAsyncioTransport):
         """Receive on an address or an existing datagram socket.
 
         Pass exactly one of ``iface`` and ``sock``. A supplied socket must match
-        this transport's address family. Once the endpoint opens, asyncio owns
-        the socket and closes it when ``closeTransport()`` is called.
+        this transport's address family and already be bound to a local port.
+        Once the endpoint opens, asyncio owns the socket and closes it when
+        ``closeTransport()`` is called.
         """
         self._checkLoopIsUsable()
         if (iface is None) == (sock is None):
@@ -157,6 +158,12 @@ class DgramAsyncioProtocol(asyncio.DatagramProtocol, AbstractAsyncioTransport):
                 )
             if sock.type != socket.SOCK_DGRAM:
                 raise error.CarrierError("Socket must have type SOCK_DGRAM")
+            try:
+                local_address = sock.getsockname()
+            except OSError as exc:
+                raise error.CarrierError("Could not read socket address") from exc
+            if local_address[1] == 0:
+                raise error.CarrierError("Socket must be bound to a local port")
         try:
             if sock is None:
                 c = self.loop.create_datagram_endpoint(

@@ -4,7 +4,9 @@ Receiving on a caller-bound socket
 ``UdpTransport.openServerMode(sock=sock)`` adopts an existing datagram socket.
 This lets an agent bind a privileged port before dropping privileges, accept a
 socket inherited from a service manager, or set socket options before binding.
-The socket must have the transport's address family and ``SOCK_DGRAM`` type.
+The socket must have the transport's address family and ``SOCK_DGRAM`` type,
+and must already be bound to a nonzero local port. Unbound sockets are rejected
+before ownership is transferred.
 Pass either ``iface`` or ``sock``, never both.
 
 For example, on POSIX, prepare the socket and then permanently switch to a
